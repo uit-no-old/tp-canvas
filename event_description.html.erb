@@ -1,10 +1,22 @@
 <% if @recording %>
+  <strong>Automatiserte opptak</strong>
+  <br>
   <img src="https://raw.githubusercontent.com/encharm/Font-Awesome-SVG-PNG/master/black/png/32/film.png">
   <br>
+  <a href="https://uit.no/om/orakelet/frag?p_document_id=386254">Mer informasjon</a>
+  <br>
+  <br>
 <% end %>
-<strong>Fagpersoner</strong><br>
-<%= @staff %>
-<br>
-<br>
-<strong>Mazemap</strong><br>
-<%= @map_url %>
+<% if @map_url.empty? == false %>
+  <strong>Mazemap</strong><br>
+  <%= @map_url %>
+  <br>
+  <br>
+<% end %>
+<% if @staff.empty? == false %>
+  <strong>Fagpersoner</strong><br>
+  <%= @staff %>
+  <br>
+  <br>
+<% end %>
+<small>*** Denne hendelsen er automatisk lagt til kalenderen ***</small>

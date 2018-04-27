@@ -71,6 +71,7 @@ end
 # tp_activities - json for TP-timetable
 # courseid - Course id - e.g INF-1100
 def add_timetable_to_canvas(courses, tp_activities, courseid)
+  return if tp_activities.nil?
   courses.each do |course|
     db_course = CanvasCourse.find_or_create(canvas_id: course["id"])
     db_course.name = course["name"]
@@ -120,6 +121,8 @@ def add_timetable_to_one_canvas_course(canvas_course, timetable, courseid, delet
     delete_canvas_events(db_course)
   end
 
+  return if timetable.nil?
+
   timetable.each do |t|
     t["eventsequences"].each do |eventsequence|
       eventsequence["events"].each do |event|
@@ -130,69 +133,73 @@ def add_timetable_to_one_canvas_course(canvas_course, timetable, courseid, delet
 end
 
 
+def fyll_sync(semester)
+
+  tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
+  tp_courses["data"].each do |tp_course|
+    puts tp_course
+    update_one_tp_course_in_canvas(tp_course["id"], semester, tp_course["terminnr"])
+  end
+
+end
+
+def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
+
+  cis_semester = ""
+  if semesterid[-1].upcase == "H"
+    cis_semester = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_HØST"
+  else
+    cis_semester = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_VÅR"
+  end
+
+  # fetch TP tietable
+  timetable = HTTParty.get(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}")
+
+  # fetch Canvas courses
+  canvas_courses = HTTParty.get(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100", headers: Headers)
+
+  puts canvas_courses
+  # remove all with wrong semester
+  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].upcase.include?(cis_semester.upcase)}
+  canvas_courses.each do |c|
+    puts c["name"]
+  end
+  return if canvas_courses.empty?
+
+  #ony one course in Canvas
+  if canvas_courses.length == 1
+    #put everything here
+    add_timetable_to_one_canvas_course(canvas_courses.first, timetable["data"]["group"].to_a.concat(timetable["data"]["plenary"].to_a), timetable["courseid"])
+
+  # more than one course in Canvas. Do we have other variants here?
+  else
+
+    # find UE - fellesundervisning? Can there be more than one?
+    ue = canvas_courses.select{|c| c["sis_course_id"].include?("UE_")}
+
+    # find UA - gruppeundervisning?
+    ua = canvas_courses.select{|c| c["sis_course_id"].include?("UA_")}
+
+    group_timetable = timetable["data"]["group"]
+
+    processed_group_timetable = add_timetable_to_canvas(ua, group_timetable, timetable['courseid'])
+
+    plenary_timetable = timetable["data"]["plenary"]
+
+    processed_plenary_timetable = add_timetable_to_canvas(ue, plenary_timetable, timetable['courseid'])
+
+    # add rest of group events to first ue - should we do this?
+    add_timetable_to_one_canvas_course(ue.first, processed_group_timetable, timetable["courseid"], false)
+
+  end
+
+
+end
+
 # MAIN STUFF
 TpBaseUrl = "https://tp.uio.no/uit/ws"
 CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
-
-current_semester = "17h"
-courseid = "IGR1600"
-termnr="1"
-
-cis_semester = ""
-if current_semester[-1].upcase == "H"
-  cis_semester = "20#{current_semester[0..1]}_HØST"
-else
-  cis_semester = "20#{current_semester[0..1]}_VÅR"
-end
-
-
-
-tp_timetable_url = TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{current_semester}&termnr=#{termnr}"
-
-# fetch TP tietable
-timetable = HTTParty.get(tp_timetable_url)
-
-
-canvas_course_url = CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"
-
-canvas_calendar_url = CanvasBaseUrl + "/calendar_events.json"
-
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
 
-# fetch Canvas courses
-canvas_courses = HTTParty.get(canvas_course_url, headers: Headers)
-
-puts canvas_courses.length
-
-# remove all with wrong semester
-canvas_courses.keep_if{|c| c["sis_course_id"].upcase.include?(cis_semester.upcase)}
-canvas_courses.each do |c|
-  puts c["name"]
-end
-
-#ony one course in Canvas
-if canvas_courses.length == 1
-  #put everything here
-  add_timetable_to_one_canvas_course(canvas_courses.first, timetable["data"]["group"].to_a.concat(timetable["data"]["plenary"].to_a), timetable["courseid"])
-
-# more than one course in Canvas. Do we have other variants here?
-else
-
-  # find UE - fellesundervisning? Can there be more than one?
-  ue = canvas_courses.select{|c| c["sis_course_id"].include?("UE_")}
-
-  # find UA - gruppeundervisning?
-  ua = canvas_courses.select{|c| c["sis_course_id"].include?("UA_")}
-
-  group_timetable = timetable["data"]["group"]
-
-  processed_group_timetable = add_timetable_to_canvas(ua, group_timetable, timetable['courseid'])
-
-  plenary_timetable = timetable["data"]["plenary"]
-
-  processed_plenary_timetable = add_timetable_to_canvas(ue, plenary_timetable, timetable['courseid'])
-
-  # add rest of group events to first ue - should we do this?
-  add_timetable_to_one_canvas_course(ue.first, processed_group_timetable, timetable["courseid"], false)
-
-end
+fyll_sync("17h")
+#update_one_tp_course_in_canvas("BED-2029NETT", "17h", 1)
