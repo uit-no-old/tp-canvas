@@ -154,10 +154,10 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
   end
 
   # fetch TP timetable
-  timetable = HTTParty.get(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}")
+  timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
 
   # fetch Canvas courses
-  canvas_courses = HTTParty.get(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100", headers: Headers)
+  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
 
   puts canvas_courses
   # remove all with wrong semester
@@ -206,5 +206,5 @@ TpBaseUrl = "https://tp.uio.no/uit/ws"
 CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
 
-fyll_sync("17h")
-#update_one_tp_course_in_canvas("FLY-6306", "17h", 1)
+#fyll_sync("17h")
+update_one_tp_course_in_canvas("ØKMES", "17h", 1)
