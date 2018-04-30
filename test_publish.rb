@@ -136,6 +136,7 @@ end
 def fyll_sync(semester)
 
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
+  tp_courses["data"].delete_if{|d| d["id"] < "FRA-1021"}
   tp_courses["data"].each do |tp_course|
     puts tp_course
     update_one_tp_course_in_canvas(tp_course["id"], semester, tp_course["terminnr"])
@@ -152,7 +153,7 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
     cis_semester = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_VÅR"
   end
 
-  # fetch TP tietable
+  # fetch TP timetable
   timetable = HTTParty.get(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}")
 
   # fetch Canvas courses
@@ -169,7 +170,11 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
   #ony one course in Canvas
   if canvas_courses.length == 1
     #put everything here
-    add_timetable_to_one_canvas_course(canvas_courses.first, timetable["data"]["group"].to_a.concat(timetable["data"]["plenary"].to_a), timetable["courseid"])
+    tdata = nil
+    unless timetable["data"].nil?
+      tdata = timetable["data"]["group"].to_a.concat(timetable["data"]["plenary"].to_a)
+    end
+    add_timetable_to_one_canvas_course(canvas_courses.first, tdata, timetable["courseid"])
 
   # more than one course in Canvas. Do we have other variants here?
   else
@@ -202,4 +207,4 @@ CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
 
 fyll_sync("17h")
-#update_one_tp_course_in_canvas("BED-2029NETT", "17h", 1)
+#update_one_tp_course_in_canvas("FLY-6306", "17h", 1)
