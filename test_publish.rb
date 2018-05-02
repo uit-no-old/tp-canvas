@@ -1,8 +1,10 @@
 require 'httparty'
 require 'sequel'
-require 'sqlite3'
+#require 'sqlite3'
 
-DB = Sequel.connect('sqlite://canvas.sqlite3')
+database_url_dev = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_dev?sslmode=require"
+database_url_prod = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_prod?sslmode=require"
+DB = Sequel.connect(database_url_dev, user: ENV["DB_USER"], password: ENV["DB_PASS"])
 
 class CanvasCourse < Sequel::Model
   one_to_many :canvas_events
@@ -136,6 +138,7 @@ end
 def fyll_sync(semester)
 
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
+  tp_courses["data"].delete_if{|d| d["id"] < "FRA-1021"}
   tp_courses["data"].each do |tp_course|
     puts tp_course
     update_one_tp_course_in_canvas(tp_course["id"], semester, tp_course["terminnr"])
@@ -152,11 +155,11 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
     cis_semester = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_VÅR"
   end
 
-  # fetch TP tietable
-  timetable = HTTParty.get(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}")
+  # fetch TP timetable
+  timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
 
   # fetch Canvas courses
-  canvas_courses = HTTParty.get(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100", headers: Headers)
+  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
 
   puts canvas_courses
   # remove all with wrong semester
@@ -169,7 +172,11 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
   #ony one course in Canvas
   if canvas_courses.length == 1
     #put everything here
-    add_timetable_to_one_canvas_course(canvas_courses.first, timetable["data"]["group"].to_a.concat(timetable["data"]["plenary"].to_a), timetable["courseid"])
+    tdata = nil
+    unless timetable["data"].nil?
+      tdata = timetable["data"]["group"].to_a.concat(timetable["data"]["plenary"].to_a)
+    end
+    add_timetable_to_one_canvas_course(canvas_courses.first, tdata, timetable["courseid"])
 
   # more than one course in Canvas. Do we have other variants here?
   else
@@ -201,5 +208,5 @@ TpBaseUrl = "https://tp.uio.no/uit/ws"
 CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
 
-fyll_sync("17h")
-#update_one_tp_course_in_canvas("BED-2029NETT", "17h", 1)
+fyll_sync("18h")
+#update_one_tp_course_in_canvas("ØKMES", "17h", 1)
