@@ -1,8 +1,10 @@
 require 'httparty'
 require 'sequel'
-require 'sqlite3'
+#require 'sqlite3'
 
-DB = Sequel.connect('sqlite://canvas.sqlite3')
+database_url_dev = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_dev?sslmode=require"
+database_url_prod = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_prod?sslmode=require"
+DB = Sequel.connect(database_url_dev, user: ENV["DB_USER"], password: ENV["DB_PASS"])
 
 class CanvasCourse < Sequel::Model
   one_to_many :canvas_events
@@ -206,5 +208,5 @@ TpBaseUrl = "https://tp.uio.no/uit/ws"
 CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
 
-#fyll_sync("17h")
-update_one_tp_course_in_canvas("ØKMES", "17h", 1)
+fyll_sync("18h")
+#update_one_tp_course_in_canvas("ØKMES", "17h", 1)
