@@ -1,5 +1,6 @@
 require 'httparty'
 require 'sequel'
+require 'bunny'
 #require 'sqlite3'
 
 database_url_dev = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_dev?sslmode=require"
@@ -196,10 +197,37 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
     processed_plenary_timetable = add_timetable_to_canvas(ue, plenary_timetable, timetable['courseid'])
 
     # add rest of group events to first ue - should we do this?
-    add_timetable_to_one_canvas_course(ue.first, processed_group_timetable, timetable["courseid"], false)
+    add_timetable_to_one_canvas_course(ue.first, processed_group_timetable, timetable["courseid"], false) if ue.first
 
   end
 
+
+end
+
+def queue_subscriber
+  # Connect to the RabbitMQ server
+  connection = Bunny.new(hostname: 'fulla.uit.no', user: 'sua', pass: 'shaun')
+  connection.start
+
+  # Create our channel and config it
+  channel = connection.create_channel
+  channel.prefetch(1)
+
+  # Get exchange
+  exchange = channel.fanout('tp-course-pub', durable: true)
+
+  # Get our queue
+  queue = channel.queue('tp-canvas-sync', durable:true, exclusive:false)
+  queue.bind(exchange)
+
+  queue.subscribe(block: true, manual_ack: true) do |delivery_info, _properties, body|
+      puts " [x] Received #{body}"
+      channel.ack(delivery_info.delivery_tag)
+      course = JSON.parse(body)
+      if course["id"] != "BOOKING"
+        update_one_tp_course_in_canvas(course["id"], course["semesterid"], course["terminnr"])
+      end
+  end
 
 end
 
@@ -208,5 +236,6 @@ TpBaseUrl = "https://tp.uio.no/uit/ws"
 CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
 
-fyll_sync("18h")
-#update_one_tp_course_in_canvas("ØKMES", "17h", 1)
+#fyll_sync("18h")
+#update_one_tp_course_in_canvas("SYP-1012", "18h", 1)
+queue_subscriber
