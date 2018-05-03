@@ -1,6 +1,3 @@
-#require 'httparty'
-#require 'sequel'
-#require 'sqlite3'
 require 'bunny'
 
 # Connect to the RabbitMQ server
@@ -9,13 +6,12 @@ connection.start
 
 # Create our channel and config it
 channel = connection.create_channel
-channel.prefetch(1)
 
 # Get exchange
-exchange = channel.fanout('tp-coursepub')
+exchange = channel.fanout('tp-course-pub', {durable: true})
 
 # Get our queue
-queue = channel.queue('hellotest_receiverclient', durable:true, exclusive:false)
+queue = channel.queue('tp-course-client_test', durable:true, exclusive:false)
 queue.bind(exchange)
 
 begin
