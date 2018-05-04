@@ -15,6 +15,8 @@ class CanvasEvent < Sequel::Model
   many_to_one :canvas_course
 end
 
+$processing_courses = []
+
 # create event in Canvas and DB-
 def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
   location = ""
@@ -65,6 +67,7 @@ def delete_canvas_events(course)
     res = HTTParty.delete(CanvasBaseUrl + "/calendar_events/#{event.canvas_id}.json", headers: Headers)
     if res.code == 200
       event.delete
+      puts "event deleted in Canvas: #{course.name} - #{event.canvas_id}"
     end
   end
 end
@@ -220,12 +223,30 @@ def queue_subscriber
   queue = channel.queue('tp-canvas-sync', durable:true, exclusive:false)
   queue.bind(exchange)
 
-  queue.subscribe(block: true, manual_ack: true) do |delivery_info, _properties, body|
+
+
+  queue.subscribe(block: true, manual_ack: true) do |delivery_info, properties, body|
       puts " [x] Received #{body}"
+      puts "processing_courses:"
+      puts $processing_courses
       channel.ack(delivery_info.delivery_tag)
       course = JSON.parse(body)
       if course["id"] != "BOOKING"
-        update_one_tp_course_in_canvas(course["id"], course["semesterid"], course["terminnr"])
+        course_key = "#{course["id"]}-#{course["terminnr"]}-#{course["semesterid"]}"
+        if $processing_courses.include?(course_key) == false
+          $processing_courses << course_key
+          #Thread.abort_on_exception = true
+          Thread.new(course["id"], course["semesterid"], course["terminnr"]) do |t_id, t_semesterid, t_terminnr|
+            begin
+              update_one_tp_course_in_canvas(t_id, t_semesterid, t_terminnr)
+            ensure
+              $processing_courses.delete("#{t_id}-#{t_terminnr}-#{t_semesterid}")
+            end
+          end
+        end
+
+
+
       end
   end
 
