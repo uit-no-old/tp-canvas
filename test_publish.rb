@@ -15,10 +15,17 @@ class CanvasEvent < Sequel::Model
   many_to_one :canvas_course
 end
 
-$processing_courses = []
+$threads = []
+
+TpBaseUrl = "https://tp.uio.no/uit/ws"
+CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
+Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
 
 # create event in Canvas and DB-
 def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
+  if Thread.current.thread_variable_get(:seppuku)
+    Thread.current.exit
+  end
   location = ""
   @map_url = ""
   if event["room"]
@@ -64,6 +71,9 @@ end
 # delete all canvas events for a course in DB
 def delete_canvas_events(course)
   course.canvas_events.each do |event|
+    if Thread.current.thread_variable_get(:seppuku)
+      Thread.current.exit
+    end
     res = HTTParty.delete(CanvasBaseUrl + "/calendar_events/#{event.canvas_id}.json", headers: Headers)
     if res.code == 200
       event.delete
@@ -90,10 +100,9 @@ def add_timetable_to_canvas(courses, tp_activities, courseid)
 
     #find matching timetable
     actid = course["sis_course_id"].split("_").last
-    ua_timetable = tp_activities.select{|t| t["actid"] == actid}
-    ua_timetable.each do |ua_t|
-      #puts ua_t
-      ua_t["eventsequences"].each do |es|
+    act_timetable = tp_activities.select{|t| t["actid"] == actid}
+    act_timetable.each do |at|
+      at["eventsequences"].each do |es|
         es["events"].each do |event|
           # add to canvas calendar
           add_event_to_canvas(event, db_course, courseid, course["id"])
@@ -139,35 +148,39 @@ def add_timetable_to_one_canvas_course(canvas_course, timetable, courseid, delet
 end
 
 
+# update entire semester in Canvas
+# semester - semester string "YY[h|v]" e.g "18v"
 def fyll_sync(semester)
-
+  # fetch all active courses from TP
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
-  tp_courses["data"].delete_if{|d| d["id"] < "FRA-1021"}
   tp_courses["data"].each do |tp_course|
-    puts tp_course
     update_one_tp_course_in_canvas(tp_course["id"], semester, tp_course["terminnr"])
   end
 
 end
 
+# update one course in Canvas
+# courseid - String e.g "INF-1100"
+# semesterid - String e.g "18v"
+# termnr - Int/String
 def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
 
-  cis_semester = ""
+  cis_course_id = ""
   if semesterid[-1].upcase == "H"
-    cis_semester = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_HØST"
+    cis_course_id = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_HØST"
   else
-    cis_semester = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_VÅR"
+    cis_course_id = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_VÅR"
   end
 
   # fetch TP timetable
   timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
 
   # fetch Canvas courses
-  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
+  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{cis_course_id}&per_page=100"), headers: Headers)
 
   puts canvas_courses
-  # remove all with wrong semester
-  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].upcase.include?(cis_semester.upcase)}
+  # remove all with wrong semester - can probably be removed
+  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].upcase.include?(cis_course_id.upcase)}
   canvas_courses.each do |c|
     puts c["name"]
   end
@@ -200,16 +213,18 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
     processed_plenary_timetable = add_timetable_to_canvas(ue, plenary_timetable, timetable['courseid'])
 
     # add rest of group events to first ue - should we do this?
-    add_timetable_to_one_canvas_course(ue.first, processed_group_timetable, timetable["courseid"], false) if ue.first
+    #add_timetable_to_one_canvas_course(ue.first, processed_group_timetable, timetable["courseid"], false) if ue.first
 
   end
 
 
 end
 
+
+# Subscribe to message queue and update when courses change
 def queue_subscriber
   # Connect to the RabbitMQ server
-  connection = Bunny.new(hostname: 'fulla.uit.no', user: 'sua', pass: 'shaun')
+  connection = Bunny.new(hostname: 'fulla.uit.no', user: ENV["MQ_USER"], pass: ENV["MQ_PASS"])
   connection.start
 
   # Create our channel and config it
@@ -224,38 +239,50 @@ def queue_subscriber
   queue.bind(exchange)
 
 
-
+  # subscribe to queue
   queue.subscribe(block: true, manual_ack: true) do |delivery_info, properties, body|
       puts " [x] Received #{body}"
-      puts "processing_courses:"
-      puts $processing_courses
+      puts "threads:"
+      $threads.each do |t|
+        puts "#{t[:name]} - #{t.object_id}"
+      end
       channel.ack(delivery_info.delivery_tag)
       course = JSON.parse(body)
-      if course["id"] != "BOOKING"
+      if ["BOOKING", "EKSAMEN"].include?(course["id"]) == false # ignore BOKKING and EKSAMEN
         course_key = "#{course["id"]}-#{course["terminnr"]}-#{course["semesterid"]}"
-        if $processing_courses.include?(course_key) == false
-          $processing_courses << course_key
-          #Thread.abort_on_exception = true
-          Thread.new(course["id"], course["semesterid"], course["terminnr"]) do |t_id, t_semesterid, t_terminnr|
-            begin
-              update_one_tp_course_in_canvas(t_id, t_semesterid, t_terminnr)
-            ensure
-              $processing_courses.delete("#{t_id}-#{t_terminnr}-#{t_semesterid}")
+        $threads.each do |t|
+          if t[:name] == course_key
+            # tell thread to kill itself
+            t.thread_variable_set(:seppuku, true)
+            # wait untill dead
+            while true
+              if t.alive? == false
+                puts "killed thread: #{t[:name]} - #{t.object_id}"
+                break
+              end
+              sleep 1
             end
           end
         end
-
-
-
+        # add ned thread for course-semester-termnr combination
+        $threads << Thread.new(course["id"], course["semesterid"], course["terminnr"]) do |t_id, t_semesterid, t_terminnr|
+          begin
+            Thread.current[:name] = "#{t_id}-#{t_terminnr}-#{t_semesterid}"
+            update_one_tp_course_in_canvas(t_id, t_semesterid, t_terminnr)
+          rescue Exception => e
+            # log and raven
+          ensure
+            $threads.delete(Thread.current)
+          end
+        end
       end
+
+
   end
 
 end
 
-# MAIN STUFF
-TpBaseUrl = "https://tp.uio.no/uit/ws"
-CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
-Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
+
 
 #fyll_sync("18h")
 #update_one_tp_course_in_canvas("SYP-1012", "18h", 1)
