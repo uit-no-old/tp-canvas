@@ -1,7 +1,7 @@
 require 'httparty'
 require 'sequel'
 require 'bunny'
-#require 'sqlite3'
+require 'optparse'
 
 database_url_dev = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_dev?sslmode=require"
 database_url_prod = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_prod?sslmode=require"
@@ -150,7 +150,7 @@ end
 
 # update entire semester in Canvas
 # semester - semester string "YY[h|v]" e.g "18v"
-def fyll_sync(semester)
+def full_sync(semester)
   # fetch all active courses from TP
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
   tp_courses["data"].each do |tp_course|
@@ -270,7 +270,7 @@ def queue_subscriber
             Thread.current[:name] = "#{t_id}-#{t_terminnr}-#{t_semesterid}"
             update_one_tp_course_in_canvas(t_id, t_semesterid, t_terminnr)
           rescue Exception => e
-            # log and raven
+            puts "ERROR: #{e}"
           ensure
             $threads.delete(Thread.current)
           end
@@ -283,7 +283,20 @@ def queue_subscriber
 end
 
 
+options = {}
+OptionParser.new do |opts|
+  opts.banner = "Command-Line utility to sync timetables from TP to Canvas. \nUsing no arguments will monitor message queue for updates.\nUsage: ruby #{File.basename(__FILE__)} [options]"
+  opts.on("-sSEMESTER", "--sync-semester=SEMESTER", "Full sync SEMESTER=YY[h/v] e.g 18v") do |v|
+    options["sync-semester"] = v
+  end
+  opts.on_tail("-h", "--help", "Show this message") do
+    puts opts
+    exit
+  end
+end.parse!
 
-#fyll_sync("18h")
-#update_one_tp_course_in_canvas("SYP-1012", "18h", 1)
-queue_subscriber
+if options["sync-semester"]
+  full_sync(options["sync-semester"])
+else
+  queue_subscriber
+end
