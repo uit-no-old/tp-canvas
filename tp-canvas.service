@@ -5,6 +5,11 @@ Description=TP Canvas sync
 User=sua
 Restart=always
 Environment="RBENV_VERSION=2.5.1"
+Environment="CANVAS_TOKEN=[canvas_token]"
+Environment="DB_USER=[db_user]"
+Environment="DB_PASS=[db_pass]"
+Environment="MQ_USER=[mq_user]"
+Environment="MQ_PASS=[mq_pass]"
 WorkingDirectory=/home/sua/canvas
 ExecStart=/home/sua/.rbenv/shims/ruby tp-canvas-sync.rb -m
 
