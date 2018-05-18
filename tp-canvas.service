@@ -10,7 +10,7 @@ Environment="DB_USER=[db_user]"
 Environment="DB_PASS=[db_pass]"
 Environment="MQ_USER=[mq_user]"
 Environment="MQ_PASS=[mq_pass]"
-WorkingDirectory=/home/sua/canvas
+WorkingDirectory=/home/sua/tp-canvas
 ExecStart=/home/sua/.rbenv/shims/ruby tp-canvas-sync.rb -m
 
 [Install]
