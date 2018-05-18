@@ -1,0 +1,5 @@
+source 'https://rubygems.org'
+gem 'httparty'
+gem 'sequel'
+gem 'bunny'
+gem 'trollop'
