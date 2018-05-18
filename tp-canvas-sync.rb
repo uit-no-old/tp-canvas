@@ -1,7 +1,8 @@
 require 'httparty'
 require 'sequel'
 require 'bunny'
-require 'optparse'
+require 'trollop'
+require 'logger'
 
 database_url_dev = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_dev?sslmode=require"
 database_url_prod = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_prod?sslmode=require"
@@ -14,6 +15,17 @@ end
 class CanvasEvent < Sequel::Model
   many_to_one :canvas_course
 end
+
+class AppLog
+  def self.log
+    if @logger.nil?
+      @logger = Logger.new("tp-canvas.log")
+      @logger.level = Logger::DEBUG
+    end
+    @logger
+  end
+end
+
 
 $threads = []
 
@@ -60,7 +72,7 @@ def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
   res = HTTParty.post(CanvasBaseUrl + "/calendar_events.json", options)
 
   if res.code == 201
-    puts "Event created in Canvas: #{courseid} #{event['summary']}"
+    AppLog.log.info("Event created in Canvas: #{courseid} #{event['summary']}")
     db_event = CanvasEvent.new
     db_event.canvas_id = res["id"]
     db_event.save
@@ -77,7 +89,7 @@ def delete_canvas_events(course)
     res = HTTParty.delete(CanvasBaseUrl + "/calendar_events/#{event.canvas_id}.json", headers: Headers)
     if res.code == 200
       event.delete
-      puts "event deleted in Canvas: #{course.name} - #{event.canvas_id}"
+      AppLog.log.info("Event deleted in Canvas: #{course.name} - #{event.canvas_id}")
     end
   end
 end
@@ -153,10 +165,36 @@ end
 def full_sync(semester)
   # fetch all active courses from TP
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
-  tp_courses["data"].each do |tp_course|
-    update_one_tp_course_in_canvas(tp_course["id"], semester, tp_course["terminnr"])
+  tp_courses["data"].each_slice(4) do |slice|
+    threads = []
+    slice.each do |tp_course|
+      threads << Thread.new{update_one_tp_course_in_canvas(tp_course["id"], semester, tp_course["terminnr"])}
+    end
+    threads.each do |t|
+      t.join
+    end
   end
 
+end
+
+def remove_one_tp_course_from_canvas(courseid, semesterid, termnr)
+
+  sis_course_id = make_sis_course_id(courseid, semesterid, termnr)
+
+  CanvasCourse.where(Sequel.lit("sis_course_id like '%#{sis_course_id}%'")).each do |course|
+    delete_canvas_events(course)
+  end
+
+end
+
+def make_sis_course_id(courseid, semesterid, termnr)
+  sis_course_id = ""
+  if semesterid[-1].upcase == "H"
+    sis_course_id = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_HØST"
+  else
+    sis_course_id = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_VÅR"
+  end
+  return sis_course_id
 end
 
 # update one course in Canvas
@@ -165,25 +203,16 @@ end
 # termnr - Int/String
 def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
 
-  cis_course_id = ""
-  if semesterid[-1].upcase == "H"
-    cis_course_id = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_HØST"
-  else
-    cis_course_id = "#{courseid}_#{termnr}_20#{semesterid[0..1]}_VÅR"
-  end
+  sis_course_id = make_sis_course_id(courseid, semesterid, termnr)
 
   # fetch TP timetable
   timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
 
   # fetch Canvas courses
-  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{cis_course_id}&per_page=100"), headers: Headers)
+  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{sis_course_id}&per_page=100"), headers: Headers)
 
-  puts canvas_courses
   # remove all with wrong semester - can probably be removed
-  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].upcase.include?(cis_course_id.upcase)}
-  canvas_courses.each do |c|
-    puts c["name"]
-  end
+  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].upcase.include?(sis_course_id.upcase)}
   return if canvas_courses.empty?
 
   #ony one course in Canvas
@@ -241,10 +270,9 @@ def queue_subscriber
 
   # subscribe to queue
   queue.subscribe(block: true, manual_ack: true) do |delivery_info, properties, body|
-      puts " [x] Received #{body}"
-      puts "threads:"
+      AppLog.log.debug(" [x] Received #{body}")
       $threads.each do |t|
-        puts "#{t[:name]} - #{t.object_id}"
+        AppLog.log.debug("Active thread - #{t[:name]} - #{t.object_id}")
       end
       channel.ack(delivery_info.delivery_tag)
       course = JSON.parse(body)
@@ -257,20 +285,22 @@ def queue_subscriber
             # wait untill dead
             while true
               if t.alive? == false
-                puts "killed thread: #{t[:name]} - #{t.object_id}"
+                AppLog.log.debug("killed thread: #{t[:name]} - #{t.object_id}")
                 break
               end
               sleep 1
             end
           end
         end
+        # max 4 threads
+        sleep 1 while $threads.length > 3
         # add ned thread for course-semester-termnr combination
         $threads << Thread.new(course["id"], course["semesterid"], course["terminnr"]) do |t_id, t_semesterid, t_terminnr|
           begin
             Thread.current[:name] = "#{t_id}-#{t_terminnr}-#{t_semesterid}"
             update_one_tp_course_in_canvas(t_id, t_semesterid, t_terminnr)
           rescue Exception => e
-            puts "ERROR: #{e}"
+            AppLog.log.error(e)
           ensure
             $threads.delete(Thread.current)
           end
@@ -283,20 +313,25 @@ def queue_subscriber
 end
 
 
-options = {}
-OptionParser.new do |opts|
-  opts.banner = "Command-Line utility to sync timetables from TP to Canvas. \nUsing no arguments will monitor message queue for updates.\nUsage: ruby #{File.basename(__FILE__)} [options]"
-  opts.on("-sSEMESTER", "--sync-semester=SEMESTER", "Full sync SEMESTER=YY[h/v] e.g 18v") do |v|
-    options["sync-semester"] = v
-  end
-  opts.on_tail("-h", "--help", "Show this message") do
-    puts opts
-    exit
-  end
-end.parse!
-
-if options["sync-semester"]
-  full_sync(options["sync-semester"])
-else
+opts = Trollop::options do
+  banner "Command-Line utility to sync timetables from TP to Canvas.\nUsage: ruby #{File.basename(__FILE__)} [options]"
+  opt :semester, "Sync full semester <s>=YY[h/v] e.g '--semester 18v'", short: "-s", long: "--semester", type: :string                   # flag --monkey, default false
+  opt :course, "Sync course '--course <courseid> <semester> <termnr>' e.g --course MED-3601 18h 1", short: "-c", long: "--course", type: :strings        # string --name <s>, default nil
+  opt :remove_course, "Remove course from Canvas '--course <courseid> <semester> <termnr>'  e.g --remove-course MED-3601 18h 1", short: "-r", long: "--remove-course", type: :strings
+  opt :mq, "Monitor message queue for updates", short: "-m", long: "--message-queue"
+end
+if opts.keys.count{|k| k.to_s.include?("_given")} > 1
+  puts "Use only one option"
+  exit
+end
+if opts[:course_given]
+  update_one_tp_course_in_canvas(opts[:course][0], opts[:course][1], opts[:course][2])
+elsif opts[:remove_course_given]
+  remove_one_tp_course_from_canvas(opts[:remove_course][0], opts[:remove_course][1], opts[:remove_course][2])
+elsif opts[:semester_given]
+  full_sync(opts[:semester])
+elsif opts[:mq_given]
   queue_subscriber
+else
+
 end

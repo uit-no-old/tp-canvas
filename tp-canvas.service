@@ -1,0 +1,12 @@
+[Unit]
+Description=TP Canvas sync
+
+[Service]
+User=sua
+Restart=always
+Environment="RBENV_VERSION=2.5.1"
+WorkingDirectory=/home/sua/canvas
+ExecStart=/home/sua/.rbenv/shims/ruby tp-canvas-sync.rb -m
+
+[Install]
+WantedBy=default.target
