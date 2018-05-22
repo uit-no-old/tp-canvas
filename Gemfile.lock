@@ -7,6 +7,7 @@ GEM
     httparty (0.16.2)
       multi_xml (>= 0.5.2)
     multi_xml (0.6.0)
+    pg (1.0.0)
     sequel (5.8.0)
     trollop (2.1.2)
 
@@ -16,6 +17,7 @@ PLATFORMS
 DEPENDENCIES
   bunny
   httparty
+  pg
   sequel
   trollop
 
