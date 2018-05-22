@@ -43,6 +43,8 @@ Follow instructions: https://github.com/rbenv/rbenv
 Set ENV: `CANVAS_TOKEN DB_USER DB_PASS MQ_USER MQ_PASS`
 
 in `/home/sua/tp-canvas`:  
+`gem install bundler`  
+`bundle install`  
 `ruby tp-canvas-sync.rb -m` <- monitor message queue
 
 #### Setup service(systemd)
