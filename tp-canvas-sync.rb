@@ -3,6 +3,7 @@ require 'sequel'
 require 'bunny'
 require 'trollop'
 require 'logger'
+require 'raven'
 
 database_url_dev = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_dev?sslmode=require"
 database_url_prod = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_prod?sslmode=require"
@@ -179,14 +180,15 @@ end
 
 def remove_one_tp_course_from_canvas(courseid, semesterid, termnr)
 
-  sis_course_id = make_sis_course_id(courseid, semesterid, termnr)
+  sis_semester = make_sis_semester(semesterid)
 
-  CanvasCourse.where(Sequel.lit("sis_course_id like '%#{sis_course_id}%'")).each do |course|
+  CanvasCourse.where(Sequel.lit("sis_course_id like '%#{courseid}%#{sis_semester}%'")).each do |course|
     delete_canvas_events(course)
   end
 
 end
 
+# this wont work. termnr should be versionnr. Not available from TP
 def make_sis_course_id(courseid, semesterid, termnr)
   sis_course_id = ""
   if semesterid[-1].upcase == "H"
@@ -197,22 +199,33 @@ def make_sis_course_id(courseid, semesterid, termnr)
   return sis_course_id
 end
 
+
+def make_sis_semester(semesterid)
+  sis_semester = ""
+  if semesterid[-1].upcase == "H"
+    sis_semester = "20#{semesterid[0..1]}_HØST"
+  else
+    sis_semester = "20#{semesterid[0..1]}_VÅR"
+  end
+  return sis_semester
+end
+
+
 # update one course in Canvas
 # courseid - String e.g "INF-1100"
 # semesterid - String e.g "18v"
 # termnr - Int/String
 def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
 
-  sis_course_id = make_sis_course_id(courseid, semesterid, termnr)
-
   # fetch TP timetable
   timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
 
   # fetch Canvas courses
-  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{sis_course_id}&per_page=100"), headers: Headers)
+  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
 
   # remove all with wrong semester - can probably be removed
-  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].upcase.include?(sis_course_id.upcase)}
+  sis_semester = make_sis_semester(semesterid)
+  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].upcase.include?(sis_semester.upcase)}
   return if canvas_courses.empty?
 
   #ony one course in Canvas
@@ -300,6 +313,7 @@ def queue_subscriber
             Thread.current[:name] = "#{t_id}-#{t_terminnr}-#{t_semesterid}"
             update_one_tp_course_in_canvas(t_id, t_semesterid, t_terminnr)
           rescue Exception => e
+            Raven.capture_exception(e)
             AppLog.log.error(e)
           ensure
             $threads.delete(Thread.current)

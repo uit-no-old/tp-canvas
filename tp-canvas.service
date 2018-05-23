@@ -10,6 +10,7 @@ Environment="DB_USER=[db_user]"
 Environment="DB_PASS=[db_pass]"
 Environment="MQ_USER=[mq_user]"
 Environment="MQ_PASS=[mq_pass]"
+Environment="SENTRY_DSN=[sentry_dsn]"
 Environment="http_proxy=http://swproxy.uit.no:3128"
 Environment="https_proxy=https://swproxy.uit.no:3128"
 WorkingDirectory=/home/sua/tp-canvas

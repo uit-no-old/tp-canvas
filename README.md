@@ -14,7 +14,7 @@ Note: special characters must be url-encoded in username/password
 
 Sequel migrations: https://github.com/jeremyevans/sequel/blob/master/doc/migration.rdoc
 
-To run: `ruby test_publish.py --help`
+To run: `ruby tp-canvas-sync.rb --help`
 
 ## Installation/setup tp-canvas.uit.no
 
