@@ -24,7 +24,7 @@ To run: `ruby tp-canvas-sync.rb --help`
 
 #### Yum
 Add `proxy=http://swproxy.uit.no:3128`  to `/etc/yum.conf`  
-Install packages: `sudo yum install -y git openssl-devel readline-devel zlib-devel postgresql-devel`
+Install packages: `sudo yum install -y git openssl-devel readline-devel zlib-devel postgresql-devel mysql-devel`
 
 
 #### Add 'sua' user
