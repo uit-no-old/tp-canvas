@@ -5,8 +5,8 @@ require 'trollop'
 require 'logger'
 require 'raven'
 
-database_url_dev = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_dev?sslmode=require"
-database_url_prod = "postgres://uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_prod?sslmode=require"
+database_url_dev = "mysql2://appbase.uit.no/tp_canvas_dev"
+database_url_prod = "mysql2://appbase.uit.no/tp_canvas_prod"
 DB = Sequel.connect(database_url_dev, user: ENV["DB_USER"], password: ENV["DB_PASS"])
 
 class CanvasCourse < Sequel::Model
@@ -73,10 +73,11 @@ def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
   res = HTTParty.post(CanvasBaseUrl + "/calendar_events.json", options)
 
   if res.code == 201
-    AppLog.log.info("Event created in Canvas: #{courseid} #{event['summary']}")
+
     db_event = CanvasEvent.new
     db_event.canvas_id = res["id"]
     db_event.save
+    AppLog.log.info("Event created in Canvas: #{courseid} #{event['summary']} - canvas id: #{db_event.canvas_id} - internal id: #{db_event.id}")
     db_course.add_canvas_event(db_event)
   end
 end
@@ -90,7 +91,7 @@ def delete_canvas_events(course)
     res = HTTParty.delete(CanvasBaseUrl + "/calendar_events/#{event.canvas_id}.json", headers: Headers)
     if res.code == 200
       event.delete
-      AppLog.log.info("Event deleted in Canvas: #{course.name} - #{event.canvas_id}")
+      AppLog.log.info("Event deleted in Canvas: #{course.name} - canvas id: #{event.canvas_id} internal id: #{event.id}")
     end
   end
 end

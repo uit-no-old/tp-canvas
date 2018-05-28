@@ -8,8 +8,12 @@ Set `CANVAS_TOKEN`, `DB_USER`, `DB_PASS`, `MQ_USER`, `MQ_PASS` as environment va
 
 Use ruby 2.5.1, Recommend https://github.com/rbenv/rbenv to install Ruby.
 
-Migrate database postgres: `sequel -m . postgres://[username]:[password]@uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_[dev/prod]?sslmode=require`
+**Migrate database**  
+postgres:   
+`sequel -m . postgres://[username]:[password]@uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_[dev/prod]?sslmode=require`
 
+mysql:  
+`sequel -m . mysql2://[username]:[password]@appbase.uit.no/tp_canvas_prod`
 Note: special characters must be url-encoded in username/password
 
 Sequel migrations: https://github.com/jeremyevans/sequel/blob/master/doc/migration.rdoc

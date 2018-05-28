@@ -10,6 +10,7 @@ GEM
       multi_xml (>= 0.5.2)
     multi_xml (0.6.0)
     multipart-post (2.0.0)
+    mysql2 (0.5.1)
     pg (1.0.0)
     sentry-raven (2.7.3)
       faraday (>= 0.7.6, < 1.0)
@@ -22,6 +23,7 @@ PLATFORMS
 DEPENDENCIES
   bunny
   httparty
+  mysql2
   pg
   sentry-raven
   sequel
