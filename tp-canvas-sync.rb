@@ -379,6 +379,8 @@ def queue_subscriber
         end
         # max 4 threads
         sleep 1 while $threads.length > 3
+
+
         # add ned thread for course-semester-termnr combination
         $threads << Thread.new(course["id"], course["semesterid"], course["terminnr"]) do |t_id, t_semesterid, t_terminnr|
           begin
@@ -391,6 +393,7 @@ def queue_subscriber
             $threads.delete(Thread.current)
           end
         end
+        sleep 1 # sleep between each thread spawn to ensure name set in thread.  
       end
 
 
