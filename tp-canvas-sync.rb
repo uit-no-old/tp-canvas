@@ -32,7 +32,7 @@ end
 $threads = []
 
 TpBaseUrl = "https://tp.uio.no/uit/ws"
-CanvasBaseUrl = "https://uit.test.instructure.com/api/v1"
+CanvasBaseUrl = "https://uit.instructure.com/api/v1"
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
 
 # create event in Canvas and DB-
