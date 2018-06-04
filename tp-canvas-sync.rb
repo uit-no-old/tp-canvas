@@ -4,10 +4,11 @@ require 'bunny'
 require 'trollop'
 require 'logger'
 require 'raven'
+require 'pp'
 
 database_url_dev = "mysql2://appbase.uit.no/tp_canvas_dev"
 database_url_prod = "mysql2://appbase.uit.no/tp_canvas_prod"
-DB = Sequel.connect(database_url_dev, user: ENV["DB_USER"], password: ENV["DB_PASS"])
+DB = Sequel.connect(database_url_prod, user: ENV["DB_USER"], password: ENV["DB_PASS"])
 
 class CanvasCourse < Sequel::Model
   one_to_many :canvas_events
@@ -101,7 +102,6 @@ end
 # tp_activities - json for TP-timetable
 # courseid - Course id - e.g INF-1100
 def add_timetable_to_canvas(courses, tp_activities, courseid)
-  return if tp_activities.nil?
   courses.each do |course|
     db_course = CanvasCourse.find_or_create(canvas_id: course["id"])
     db_course.name = course["name"]
@@ -111,6 +111,7 @@ def add_timetable_to_canvas(courses, tp_activities, courseid)
     # delete old events if any
     delete_canvas_events(db_course)
 
+    next if tp_activities.nil?
 
     #find matching timetable
     actid = course["sis_course_id"].split("_").last
@@ -161,6 +162,52 @@ def add_timetable_to_one_canvas_course(canvas_course, timetable, courseid, delet
   end
 end
 
+# remove local courses that have been removed from Canvas
+# canvas_courses - hash - canvas api courses for course/semester
+# courseid - Course id - e.g INF-1100
+# sis_semester - semster in sis_course_id_format - e.g 2018_HØST
+def remove_local_courses_missing_from_canvas(canvas_courses, courseid, sis_semester)
+  #local_courses = CanvasCourse.where(Sequel.lit("sis_course_id like '%#{courseid}\__\_#{sis_semester}%'"))
+
+
+end
+
+# check for structual changes in canvas courses
+# semester - semester string "YY[h|v]" e.g "18v"
+def check_canvas_structure_change(semester)
+  # fetch all active courses from TP
+  tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
+  sis_semester = make_sis_semester(semester)
+
+  tp_courses["data"].each do |tp_course|
+    begin
+      canvas_courses = fetch_and_clean_canvas_courses(tp_course['id'], semester)
+
+      #remove_local_courses_missing_from_canvas(canvas_courses, tp_course['id'], sis_semester) - to be continued....
+
+      canvas_courses_ids = canvas_courses.collect{|c| c["sis_course_id"]}
+
+      local_courses = CanvasCourse.where(Sequel.lit("sis_course_id like '%#{tp_course['id']}\\_%\\_#{sis_semester}%'")).collect{|c| c.sis_course_id}
+
+      diff =  local_courses - canvas_courses_ids | canvas_courses_ids - local_courses
+
+      unless (local_courses - canvas_courses_ids).empty?
+        # this does not seem to happen, if it does we need to implement remove_local_courses_missing_from_canvas
+        AppLog.log.error("Local course removed from canvas.....you did not think this would happen....now get to work! courseid:#{tp_course['id']} semester: #{semester}")
+        Raven.capture_message("Local course removed from canvas.....you did not think this would happen....now get to work! courseid:#{tp_course['id']} semester: #{semester}")
+      end
+
+      unless diff.empty?
+        AppLog.log.debug("Course changed in Canvas need to update. courseid: #{tp_course['id']} semester: #{semester} terminnr: #{tp_course['terminnr']}")
+        update_one_tp_course_in_canvas(tp_course['id'], semester, tp_course['terminnr'])
+      end
+    rescue Exception => e
+      Raven.capture_exception(e)
+      AppLog.log.error(e)
+    end
+  end
+
+end
 
 # update entire semester in Canvas
 # semester - semester string "YY[h|v]" e.g "18v"
@@ -183,7 +230,7 @@ def remove_one_tp_course_from_canvas(courseid, semesterid, termnr)
 
   sis_semester = make_sis_semester(semesterid)
 
-  CanvasCourse.where(Sequel.lit("sis_course_id like '%#{courseid}%#{sis_semester}%'")).each do |course|
+  CanvasCourse.where(Sequel.lit("sis_course_id like '%#{courseid}\\_%\\_#{sis_semester}%'")).each do |course|
     delete_canvas_events(course)
   end
 
@@ -211,6 +258,29 @@ def make_sis_semester(semesterid)
   return sis_semester
 end
 
+# fetch canvas courses from ws
+# remove wrong semester and wrong courseid
+# courseid - String e.g "INF-1100"
+# semesterid - String e.g "18v"
+def fetch_and_clean_canvas_courses(courseid, semesterid)
+  # fetch Canvas courses
+  canvas_courses_res = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
+  next_url = canvas_courses_res.headers["link"].split(",").select{|l| l.include?('rel="next"')}
+  canvas_courses = canvas_courses_res.parsed_response
+  #fetch paginated
+  while next_url.empty? == false
+    next_page = HTTParty.get(URI.escape(next_url.first.split(";").first[1..-2]), headers: Headers)
+    canvas_courses += next_page.parsed_response
+    next_url = next_page.headers["link"].split(",").select{|l| l.include?('rel="next"')}
+  end
+
+  # remove all with wrong semester and wrong courseid
+  sis_semester = make_sis_semester(semesterid)
+  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].include?("_#{courseid}_") and c["sis_course_id"].upcase.include?(sis_semester.upcase)}
+
+  return canvas_courses
+
+end
 
 # update one course in Canvas
 # courseid - String e.g "INF-1100"
@@ -222,11 +292,12 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
   timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
 
   # fetch Canvas courses
-  canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
+  #canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
 
-  # remove all with wrong semester - can probably be removed
-  sis_semester = make_sis_semester(semesterid)
-  canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].upcase.include?(sis_semester.upcase)}
+  # remove all with wrong semester
+  #sis_semester = make_sis_semester(semesterid)
+  #canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].include?("_#{courseid}_") and c["sis_course_id"].upcase.include?(sis_semester.upcase)}
+  canvas_courses = fetch_and_clean_canvas_courses(courseid, semesterid)
   return if canvas_courses.empty?
 
   #ony one course in Canvas
@@ -327,11 +398,10 @@ def queue_subscriber
 
 end
 
-
 opts = Trollop::options do
   banner "Command-Line utility to sync timetables from TP to Canvas.\nUsage: ruby #{File.basename(__FILE__)} [options]"
-  opt :semester, "Sync full semester <s>=YY[h/v] e.g '--semester 18v'", short: "-s", long: "--semester", type: :string                   # flag --monkey, default false
-  opt :course, "Sync course '--course <courseid> <semester> <termnr>' e.g --course MED-3601 18h 1", short: "-c", long: "--course", type: :strings        # string --name <s>, default nil
+  opt :semester, "Add full semester <s>=YY[h/v] e.g '--semester 18v'", short: "-s", long: "--semester", type: :string
+  opt :course, "Add course '--course <courseid> <semester> <termnr>' e.g --course MED-3601 18h 1", short: "-c", long: "--course", type: :strings
   opt :remove_course, "Remove course from Canvas '--course <courseid> <semester> <termnr>'  e.g --remove-course MED-3601 18h 1", short: "-r", long: "--remove-course", type: :strings
   opt :mq, "Monitor message queue for updates", short: "-m", long: "--message-queue"
 end
