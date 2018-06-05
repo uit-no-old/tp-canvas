@@ -393,7 +393,7 @@ def queue_subscriber
             $threads.delete(Thread.current)
           end
         end
-        sleep 1 # sleep between each thread spawn to ensure name set in thread.  
+        sleep 1 # sleep between each thread spawn to ensure name set in thread.
       end
 
 
@@ -407,6 +407,7 @@ opts = Trollop::options do
   opt :course, "Add course '--course <courseid> <semester> <termnr>' e.g --course MED-3601 18h 1", short: "-c", long: "--course", type: :strings
   opt :remove_course, "Remove course from Canvas '--course <courseid> <semester> <termnr>'  e.g --remove-course MED-3601 18h 1", short: "-r", long: "--remove-course", type: :strings
   opt :mq, "Monitor message queue for updates", short: "-m", long: "--message-queue"
+  opt :canvas_change, "Check for Canvas change <s>=YY[h/v] e.g '--canvas-diff 18v'", short: "-d", long: "--canvas-diff", type: :string
 end
 if opts.keys.count{|k| k.to_s.include?("_given")} > 1
   puts "Use only one option"
@@ -420,6 +421,8 @@ elsif opts[:semester_given]
   full_sync(opts[:semester])
 elsif opts[:mq_given]
   queue_subscriber
+elsif opts[:canvas_change_given]
+  check_canvas_structure_change(opts[:canvas_change])
 else
 
 end
