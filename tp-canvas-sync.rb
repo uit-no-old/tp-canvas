@@ -175,6 +175,7 @@ end
 # check for structual changes in canvas courses
 # semester - semester string "YY[h|v]" e.g "18v"
 def check_canvas_structure_change(semester)
+  AppLog.log.info("Starting check for change in Canvas course structure")
   # fetch all active courses from TP
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
   sis_semester = make_sis_semester(semester)
@@ -198,7 +199,7 @@ def check_canvas_structure_change(semester)
       end
 
       unless diff.empty?
-        AppLog.log.debug("Course changed in Canvas need to update. courseid: #{tp_course['id']} semester: #{semester} terminnr: #{tp_course['terminnr']}")
+        AppLog.log.info("Course changed in Canvas need to update. courseid: #{tp_course['id']} semester: #{semester} terminnr: #{tp_course['terminnr']}")
         update_one_tp_course_in_canvas(tp_course['id'], semester, tp_course['terminnr'])
       end
     rescue Exception => e
