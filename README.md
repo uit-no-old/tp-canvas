@@ -9,9 +9,6 @@ Set `CANVAS_TOKEN`, `DB_USER`, `DB_PASS`, `MQ_USER`, `MQ_PASS` as environment va
 Use ruby 2.5.1, Recommend https://github.com/rbenv/rbenv to install Ruby.
 
 **Migrate database**  
-postgres:   
-`sequel -m . postgres://[username]:[password]@uit-ita-sua-tp-canvas-db.postgres.database.azure.com/tp_canvas_[dev/prod]?sslmode=require`
-
 mysql:  
 `sequel -m . mysql2://[username]:[password]@appbase.uit.no/tp_canvas_prod`
 Note: special characters must be url-encoded in username/password
@@ -58,11 +55,3 @@ edit `/lib/systemd/system/tp-canvas.service`, set env values
 `sudo systemctl start tp-canvas.service`
 
 Service status: `sudo systemctl status tp-canvas.service`
-
-#### SSH tunnel (Azure database)
-As of 22.05.2018 the Postgres database is not available from tp-canvas.uit.no.
-A temporary workaround is using a ssh-tunnel via another computer.
-This is not a acceptable solution and should be fixed.
-
-ssh-tunnel from Øyvind's workstation  
-`ssh -R 5432:uit-ita-sua-tp-canvas-db.postgres.database.azure.com:5432 oya027@tp-canvas.uit.no`
