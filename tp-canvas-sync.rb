@@ -324,7 +324,7 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
 
     plenary_timetable = timetable["data"]["plenary"]
 
-    processed_plenary_timetable = add_timetable_to_canvas(ue, plenary_timetable, timetable['courseid'])
+    processed_plenary_timetable = add_timetable_to_one_canvas_course(ue.first, plenary_timetable, timetable['courseid']) if ue.first
 
     # add rest of group events to first ue - should we do this?
     #add_timetable_to_one_canvas_course(ue.first, processed_group_timetable, timetable["courseid"], false) if ue.first
