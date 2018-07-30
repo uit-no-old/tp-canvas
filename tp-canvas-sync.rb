@@ -163,13 +163,14 @@ def add_timetable_to_one_canvas_course(canvas_course, timetable, courseid, delet
 end
 
 # remove local courses that have been removed from Canvas
-# canvas_courses - hash - canvas api courses for course/semester
-# courseid - Course id - e.g INF-1100
-# sis_semester - semster in sis_course_id_format - e.g 2018_HØST
-def remove_local_courses_missing_from_canvas(canvas_courses, courseid, sis_semester)
-  #local_courses = CanvasCourse.where(Sequel.lit("sis_course_id like '%#{courseid}\__\_#{sis_semester}%'"))
+# canvas_courses - array - canvas sis-ids
 
-
+def remove_local_courses_missing_from_canvas(canvas_courses)
+  canvas_courses.each do |course_id|
+    local_course = CanvasCourse.where(sis_course_id: course_id).first
+    local_course.remove_all_canvas_events
+    local_course.delete
+  end
 end
 
 # check for structual changes in canvas courses
@@ -184,8 +185,6 @@ def check_canvas_structure_change(semester)
     begin
       canvas_courses = fetch_and_clean_canvas_courses(tp_course['id'], semester)
 
-      #remove_local_courses_missing_from_canvas(canvas_courses, tp_course['id'], sis_semester) - to be continued....
-
       canvas_courses_ids = canvas_courses.collect{|c| c["sis_course_id"]}
 
       local_courses = CanvasCourse.where(Sequel.lit("sis_course_id like '%#{tp_course['id']}\\_%\\_#{sis_semester}%'")).collect{|c| c.sis_course_id}
@@ -193,9 +192,9 @@ def check_canvas_structure_change(semester)
       diff =  local_courses - canvas_courses_ids | canvas_courses_ids - local_courses
 
       unless (local_courses - canvas_courses_ids).empty?
-        # this does not seem to happen, if it does we need to implement remove_local_courses_missing_from_canvas
-        AppLog.log.error("Local course removed from canvas.....you did not think this would happen....now get to work! courseid:#{tp_course['id']} semester: #{semester}")
-        Raven.capture_message("Local course removed from canvas.....you did not think this would happen....now get to work! courseid:#{tp_course['id']} semester: #{semester}")
+        remove_local_courses_missing_from_canvas(local_courses - canvas_courses_ids)
+        AppLog.log.error("Local course removed from canvas. courseid:#{tp_course['id']} semester: #{semester}")
+        Raven.capture_message("Local course removed from canvas. courseid:#{tp_course['id']} semester: #{semester}")
       end
 
       unless diff.empty?
@@ -362,7 +361,7 @@ def queue_subscriber
       end
       channel.ack(delivery_info.delivery_tag)
       course = JSON.parse(body)
-      if ["BOOKING", "EKSAMEN"].include?(course["id"]) == false # ignore BOKKING and EKSAMEN
+      if ["BOOKING", "EKSAMEN"].include?(course["id"]) == false # ignore BOOKING and EKSAMEN
         course_key = "#{course["id"]}-#{course["terminnr"]}-#{course["semesterid"]}"
         $threads.each do |t|
           if t[:name] == course_key
