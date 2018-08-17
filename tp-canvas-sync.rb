@@ -212,6 +212,7 @@ end
 # update entire semester in Canvas
 # semester - semester string "YY[h|v]" e.g "18v"
 def full_sync(semester)
+  AppLog.log.info("Starting full update for semester: #{semester}")
   # fetch all active courses from TP
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
   threads = []
