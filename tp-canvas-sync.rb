@@ -214,14 +214,24 @@ end
 def full_sync(semester)
   # fetch all active courses from TP
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
-  tp_courses["data"].each_slice(4) do |slice|
-    threads = []
-    slice.each do |tp_course|
-      threads << Thread.new{update_one_tp_course_in_canvas(tp_course["id"], semester, tp_course["terminnr"])}
-    end
+  threads = []
+  tp_courses["data"].each do |tp_course|
+    sleep 1 while threads.length > 4
     threads.each do |t|
-      t.join
+      AppLog.log.debug("Active thread - #{t[:name]} - #{t.object_id}")
+    end  
+    threads << Thread.new(tp_course["id"], semester, tp_course["terminnr"]) do |t_id, t_semesterid, t_terminnr|
+      begin
+        Thread.current[:name] = "#{t_id}-#{t_terminnr}-#{t_semesterid}"
+        update_one_tp_course_in_canvas(t_id, t_semesterid, t_terminnr)
+      rescue Exception => e
+        Raven.capture_exception(e)
+        AppLog.log.error(e)
+      ensure
+        threads.delete(Thread.current)
+      end
     end
+    sleep 1
   end
 
 end
@@ -300,7 +310,7 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
   canvas_courses = fetch_and_clean_canvas_courses(courseid, semesterid)
   return if canvas_courses.empty?
 
-  #ony one course in Canvas
+  #only one course in Canvas
   if canvas_courses.length == 1
     #put everything here
     tdata = nil
