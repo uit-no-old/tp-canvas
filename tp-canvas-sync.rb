@@ -5,6 +5,8 @@ require 'trollop'
 require 'logger'
 require 'raven'
 require 'pp'
+require 'time'
+require 'nokogiri'
 
 database_url_dev = "mysql2://appbase.uit.no/tp_canvas_dev"
 database_url_prod = "mysql2://appbase.uit.no/tp_canvas_prod"
@@ -33,7 +35,66 @@ $threads = []
 
 TpBaseUrl = "https://tp.uio.no/uit/ws"
 CanvasBaseUrl = "https://uit.instructure.com/api/v1"
+#CanvasBaseUrl = "https://uit.test.instructure.com/api/v1" # Canvas test
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
+
+MqHost = "fulla.uit.no"
+MqExchange = "tp-course-pub"
+MqQueue = "tp-canvas-sync"
+#MqQueue = "tp-canvas-sync-test" #Test queue
+
+# compare tp_event and canvas_event
+# check for changes in title, location, start-date, end-date, staff and recording tag
+# tp_event json from tp-ws
+# canvas_event json from canvas-ws
+# courseid - Course id - e.g INF-1100 (required for title)
+def tp_event_equals_canvas_event?(tp_event, canvas_event, courseid)
+  if Thread.current.thread_variable_get(:seppuku)
+    Thread.current.exit
+  end
+  #canvas workflow_state - deleted in canvas
+  return false if canvas_event["workflow_state"] == "deleted"
+
+  #title
+  title = "#{courseid} #{tp_event['summary']}"
+  #puts "|#{title}| - |#{canvas_event["title"]}|"
+  return false if title != canvas_event["title"]
+
+  #location
+  location = ""
+  if tp_event["room"]
+    location = tp_event["room"].collect{|room| "#{room['buildingid']} #{room['roomid']}"}.join(", ")
+  end
+  #puts "|#{location}| - |#{canvas_event["location_name"]}|"
+  return false if location != canvas_event["location_name"]
+  
+  #dates
+  return false if Time.parse(tp_event["dtstart"]) != Time.parse(canvas_event["start_at"])
+  return false if Time.parse(tp_event["dtend"]) != Time.parse(canvas_event["end_at"])
+  #puts "|#{Time.parse(tp_event["dtstart"])}| - |#{Time.parse(canvas_event["start_at"])}|"
+  #puts "|#{Time.parse(tp_event["dtend"])}| - |#{Time.parse(canvas_event["end_at"])}|"
+
+  # fetch recording and staff from canvas_event
+  doc = Nokogiri::HTML(canvas_event["description"])
+  span = doc.at_css("span#description-meta")
+  return false if span.nil?
+  meta = JSON.parse(span.child.text)
+
+  #staff
+  staff_arr = []
+  if tp_event["staffs"]
+    staff_arr = tp_event["staffs"].collect{|staff| "#{staff['firstname']} #{staff['lastname']}"}
+  end
+  #puts "|#{staff_arr.sort}| - |#{meta["staff"].sort}|"
+  return false if staff_arr.sort != meta["staff"].sort
+  
+  #recording tag
+  recording = (!tp_event["tags"].nil? and tp_event["tags"].grep(/Mediasite/).any?)
+  #puts "|#{recording}| - |#{meta["recording"]}|"
+  return false if recording != meta["recording"]
+
+  true
+end
 
 # create event in Canvas and DB-
 def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
@@ -50,14 +111,17 @@ def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
    @map_url.rstrip!
   end
   @staff = ""
+  @staff_arr = []
   if event["staffs"]
     @staff = event["staffs"].collect{|staff| "#{staff['firstname']} #{staff['lastname']}"}.join("<br>")
+    @staff_arr = event["staffs"].collect{|staff| "#{staff['firstname']} #{staff['lastname']}"}
   end
   @recording = false
   if event["tags"] and event["tags"].grep(/Mediasite/).any?
     @recording = true
   end
-
+  @description_meta = {recording: @recording, staff: @staff_arr}
+  
   options = { headers: Headers,
               query:
               {calendar_event:
@@ -83,17 +147,32 @@ def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
   end
 end
 
-# delete all canvas events for a course in DB
+# delete single canvas event in DB and Canvas WS
+def delete_canvas_event(event)
+  if Thread.current.thread_variable_get(:seppuku)
+    Thread.current.exit
+  end
+  res = HTTParty.delete(CanvasBaseUrl + "/calendar_events/#{event.canvas_id}.json", headers: Headers)
+  if res.code == 200 # OK
+    event.delete
+    AppLog.log.info("Event deleted in Canvas: #{event.canvas_course.name} - canvas id: #{event.canvas_id} internal id: #{event.id}")
+  elsif res.code == 404 #NOT FOUND
+    event.delete
+    AppLog.log.info("Event missing in Canvas: #{event.canvas_course.name} - canvas id: #{event.canvas_id} internal id: #{event.id}")
+  elsif res.code == 401 #UNAUTHORIZED
+    # is the event deleted in Canvas?
+    canvas_event = HTTParty.get(CanvasBaseUrl + "/calendar_events/#{event.canvas_id}", headers: Headers)
+    if canvas_event["workflow_state"] == "deleted"
+      event.delete
+      AppLog.log.info("Event workflow_status is 'deleted' in Canvas: #{event.canvas_course.name} - canvas id: #{event.canvas_id} internal id: #{event.id}")  
+    end
+  end
+end
+
+# delete all canvas events for a course in DB and Canvas WS
 def delete_canvas_events(course)
   course.canvas_events.each do |event|
-    if Thread.current.thread_variable_get(:seppuku)
-      Thread.current.exit
-    end
-    res = HTTParty.delete(CanvasBaseUrl + "/calendar_events/#{event.canvas_id}.json", headers: Headers)
-    if res.code == 200
-      event.delete
-      AppLog.log.info("Event deleted in Canvas: #{course.name} - canvas id: #{event.canvas_id} internal id: #{event.id}")
-    end
+    delete_canvas_event(event)
   end
 end
 
@@ -102,69 +181,75 @@ end
 # tp_activities - json for TP-timetable
 # courseid - Course id - e.g INF-1100
 def add_timetable_to_canvas(courses, tp_activities, courseid)
+  return if tp_activities.nil?
   courses.each do |course|
-    db_course = CanvasCourse.find_or_create(canvas_id: course["id"])
-    db_course.name = course["name"]
-    db_course.course_code = course["course_code"]
-    db_course.sis_course_id = course["sis_course_id"]
-    db_course.save
-    # delete old events if any
-    delete_canvas_events(db_course)
-
-    next if tp_activities.nil?
-
     #find matching timetable
     actid = course["sis_course_id"].split("_").last
     act_timetable = tp_activities.select{|t| t["actid"] == actid}
-    act_timetable.each do |at|
-      at["eventsequences"].each do |es|
-        es["events"].each do |event|
-          # add to canvas calendar
-          add_event_to_canvas(event, db_course, courseid, course["id"])
-
-          # delete from timetable
-          tp_activities.delete_if{|t| t["actid"] == actid}
-
-
-        end
-      end
-    end
+    add_timetable_to_one_canvas_course(course, act_timetable, courseid)
   end
-  return tp_activities
 end
 
 
-# 1 used if there is only one course in canvas for a given course-code
-# 2 Also used to add any remaining activities from TP to "main" course in Canvas
+# used if there is only one course in canvas for a given course-code
 # canvas_course - json for course in Canvas
 # timetable - json for TP-timetable
 # courseid - Course id - e.g INF-1100
-# delete_old - used for case 2.
-def add_timetable_to_one_canvas_course(canvas_course, timetable, courseid, delete_old=true)
+def add_timetable_to_one_canvas_course(canvas_course, timetable, courseid)
   db_course = CanvasCourse.find_or_create(canvas_id: canvas_course["id"])
   db_course.name = canvas_course["name"]
   db_course.course_code = canvas_course["course_code"]
   db_course.sis_course_id = canvas_course["sis_course_id"]
   db_course.save
 
-  if delete_old
+  #empty tp-timetable
+  if timetable.nil?
     delete_canvas_events(db_course)
+    return
   end
 
-  return if timetable.nil?
-
+  # put tp-events in array
+  tp_events = []  
   timetable.each do |t|
     t["eventsequences"].each do |eventsequence|
       eventsequence["events"].each do |event|
-        add_event_to_canvas(event, db_course, courseid, canvas_course["id"])
+        tp_events << event
       end
     end
   end
+
+  # fetch Canvas events found in db
+  db_course.canvas_events.each do |canvas_event_db|
+    canvas_event_ws = HTTParty.get(CanvasBaseUrl + "/calendar_events/#{canvas_event_db.canvas_id}", headers: Headers)
+    found_matching_tp_event = false
+    
+    #look for match between canvas and tp
+    tp_events.each_with_index do |tp_event, i|
+      if tp_event_equals_canvas_event?(tp_event, canvas_event_ws, courseid)
+        # no need to update, remove tp_event from array of events
+        tp_events.delete_at(i)
+        found_matching_tp_event = true  
+        AppLog.log.debug("Event match in TP and Canvas - no update needed: #{db_course.name} - canvas id: #{canvas_event_db.canvas_id} internal id: #{canvas_event_db.id}")
+        break
+      end
+    end
+    
+    if found_matching_tp_event == false
+      #puts "Have to delete canvas_event: #{canvas_event_ws["id"]} "
+      delete_canvas_event(canvas_event_db)
+      #canvas_delete_counter += 1
+    end
+  end
+
+  # add remaining tp_events in Canvas
+  tp_events.each do |event|
+    add_event_to_canvas(event, db_course, courseid, canvas_course["id"])
+  end
+  
 end
 
 # remove local courses that have been removed from Canvas
 # canvas_courses - array - canvas sis-ids
-
 def remove_local_courses_missing_from_canvas(canvas_courses)
   canvas_courses.each do |course_id|
     local_course = CanvasCourse.where(sis_course_id: course_id).first
@@ -303,11 +388,6 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
   timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
 
   # fetch Canvas courses
-  #canvas_courses = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
-
-  # remove all with wrong semester
-  #sis_semester = make_sis_semester(semesterid)
-  #canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].include?("_#{courseid}_") and c["sis_course_id"].upcase.include?(sis_semester.upcase)}
   canvas_courses = fetch_and_clean_canvas_courses(courseid, semesterid)
   return if canvas_courses.empty?
 
@@ -331,14 +411,12 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
 
     group_timetable = timetable["data"]["group"]
 
-    processed_group_timetable = add_timetable_to_canvas(ua, group_timetable, timetable['courseid'])
+    add_timetable_to_canvas(ua, group_timetable, timetable['courseid'])
 
     plenary_timetable = timetable["data"]["plenary"]
 
-    processed_plenary_timetable = add_timetable_to_one_canvas_course(ue.first, plenary_timetable, timetable['courseid']) if ue.first
+    add_timetable_to_one_canvas_course(ue.first, plenary_timetable, timetable['courseid']) if ue.first
 
-    # add rest of group events to first ue - should we do this?
-    #add_timetable_to_one_canvas_course(ue.first, processed_group_timetable, timetable["courseid"], false) if ue.first
 
   end
 
@@ -349,7 +427,7 @@ end
 # Subscribe to message queue and update when courses change
 def queue_subscriber
   # Connect to the RabbitMQ server
-  connection = Bunny.new(hostname: 'fulla.uit.no', user: ENV["MQ_USER"], pass: ENV["MQ_PASS"])
+  connection = Bunny.new(hostname: MqHost, user: ENV["MQ_USER"], pass: ENV["MQ_PASS"])
   connection.start
 
   # Create our channel and config it
@@ -357,10 +435,10 @@ def queue_subscriber
   channel.prefetch(1)
 
   # Get exchange
-  exchange = channel.fanout('tp-course-pub', durable: true)
+  exchange = channel.fanout(MqExchange, durable: true)
 
   # Get our queue
-  queue = channel.queue('tp-canvas-sync', durable:true, exclusive:false)
+  queue = channel.queue(MqQueue, durable:true, exclusive:false)
   queue.bind(exchange)
 
 
@@ -392,7 +470,7 @@ def queue_subscriber
         sleep 1 while $threads.length > 3
 
 
-        # add ned thread for course-semester-termnr combination
+        # add new thread for course-semester-termnr combination
         $threads << Thread.new(course["id"], course["semesterid"], course["terminnr"]) do |t_id, t_semesterid, t_terminnr|
           begin
             Thread.current[:name] = "#{t_id}-#{t_terminnr}-#{t_semesterid}"

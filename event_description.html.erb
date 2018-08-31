@@ -1,7 +1,7 @@
 <% if @recording %>
   <strong>Automatiserte opptak</strong>
   <br>
-  <img src="https://raw.githubusercontent.com/encharm/Font-Awesome-SVG-PNG/master/black/png/32/film.png">
+  <img src="https://uit.no/ressurs/canvas/film.png">
   <br>
   <a href="https://uit.no/om/enhet/artikkel?p_document_id=578589&p_dimension_id=88225&men=28927">Mer informasjon</a>
   <br>
@@ -29,3 +29,7 @@
   <small>**************************************************</small>
   <br>
 </div>
+<div style="color: #6c757d">
+  <small><small>Oppdatert <%= Time.now.strftime("%d.%m.%Y %H:%M")%></small></small>
+</div>
+<span id="description-meta" style="display:none"><%=@description_meta.to_json %></span>
