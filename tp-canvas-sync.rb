@@ -386,6 +386,8 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
 
   # fetch TP timetable
   timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
+  AppLog.log.debug("TP timetable: ")
+  AppLog.log.debug(timetable)
 
   # fetch Canvas courses
   canvas_courses = fetch_and_clean_canvas_courses(courseid, semesterid)
