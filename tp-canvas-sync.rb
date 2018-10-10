@@ -52,12 +52,12 @@ def tp_event_equals_canvas_event?(tp_event, canvas_event, courseid)
   if Thread.current.thread_variable_get(:seppuku)
     Thread.current.exit
   end
+  
   #canvas workflow_state - deleted in canvas
   return false if canvas_event["workflow_state"] == "deleted"
 
   #title
   title = "#{courseid} #{tp_event['summary']}"
-  #puts "|#{title}| - |#{canvas_event["title"]}|"
   return false if title != canvas_event["title"]
 
   #location
@@ -65,14 +65,11 @@ def tp_event_equals_canvas_event?(tp_event, canvas_event, courseid)
   if tp_event["room"]
     location = tp_event["room"].collect{|room| "#{room['buildingid']} #{room['roomid']}"}.join(", ")
   end
-  #puts "|#{location}| - |#{canvas_event["location_name"]}|"
   return false if location != canvas_event["location_name"]
   
   #dates
   return false if Time.parse(tp_event["dtstart"]) != Time.parse(canvas_event["start_at"])
   return false if Time.parse(tp_event["dtend"]) != Time.parse(canvas_event["end_at"])
-  #puts "|#{Time.parse(tp_event["dtstart"])}| - |#{Time.parse(canvas_event["start_at"])}|"
-  #puts "|#{Time.parse(tp_event["dtend"])}| - |#{Time.parse(canvas_event["end_at"])}|"
 
   # fetch recording and staff from canvas_event
   doc = Nokogiri::HTML(canvas_event["description"])
@@ -85,18 +82,16 @@ def tp_event_equals_canvas_event?(tp_event, canvas_event, courseid)
   if tp_event["staffs"]
     staff_arr = tp_event["staffs"].collect{|staff| "#{staff['firstname']} #{staff['lastname']}"}
   end
-  #puts "|#{staff_arr.sort}| - |#{meta["staff"].sort}|"
   return false if staff_arr.sort != meta["staff"].sort
   
   #recording tag
   recording = (!tp_event["tags"].nil? and tp_event["tags"].grep(/Mediasite/).any?)
-  #puts "|#{recording}| - |#{meta["recording"]}|"
   return false if recording != meta["recording"]
 
   true
 end
 
-# create event in Canvas and DB-
+# create event in Canvas and DB
 def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
   if Thread.current.thread_variable_get(:seppuku)
     Thread.current.exit
@@ -235,9 +230,7 @@ def add_timetable_to_one_canvas_course(canvas_course, timetable, courseid)
     end
     
     if found_matching_tp_event == false
-      #puts "Have to delete canvas_event: #{canvas_event_ws["id"]} "
       delete_canvas_event(canvas_event_db)
-      #canvas_delete_counter += 1
     end
   end
 
@@ -469,7 +462,7 @@ def queue_subscriber
           end
         end
         # max 4 threads
-        sleep 1 while $threads.length > 3
+        sleep 1 while $threads.length > 4
 
 
         # add new thread for course-semester-termnr combination
