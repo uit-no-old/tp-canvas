@@ -39,7 +39,7 @@ Follow instructions: https://github.com/rbenv/rbenv
 
 #### Checkout and test script (as sua)
 `git config --global http.proxy http://swproxy.uit.no:3128`  
-`git clone git@bitzer.uit.no:sua/tp-canvas.git /home/sua/tp-canvas`
+`git clone git@github.com:uit-no/tp-canvas.git /home/sua/tp-canvas`
 
 Set ENV: `CANVAS_TOKEN DB_USER DB_PASS MQ_USER MQ_PASS`
 
@@ -55,3 +55,22 @@ edit `/lib/systemd/system/tp-canvas.service`, set env values
 `sudo systemctl start tp-canvas.service`
 
 Service status: `sudo systemctl status tp-canvas.service`
+
+#### Crontab for canvas structural changes
+Add values to ENV variables
+```
+# begin Canvas course change check 
+RBENV_VERSION=2.5.1
+CANVAS_TOKEN=
+DB_USER=
+DB_PASS=
+MQ_USER=
+MQ_PASS=
+SENTRY_DSN=
+http_proxy=
+https_proxy=
+
+0 2 * * * /bin/bash -l -c 'cd /home/sua/tp-canvas && /home/sua/.rbenv/shims/ruby tp-canvas-sync.rb --canvas-diff 18h'
+#end Canvas course change check
+```
+
