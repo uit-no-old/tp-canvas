@@ -1,5 +1,7 @@
 # TP-Canvas sync
 
+10.10.2018 Øyvind:  MOVED TO https://github.com/uit-no/tp-canvas
+
 Authors: Håvard Pedersen & Øyvind Guttvik Årnes
 
 A tool for syncing timetables from TP to Canvas.
