@@ -390,7 +390,7 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
   if canvas_courses.length == 1
     #put everything here
     tdata = nil
-    unless timetable["data"].nil?
+    if timetable["data"]
       tdata = timetable["data"]["group"].to_a.concat(timetable["data"]["plenary"].to_a)
     end
     add_timetable_to_one_canvas_course(canvas_courses.first, tdata, timetable["courseid"])
@@ -404,11 +404,17 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
     # find UA - gruppeundervisning?
     ua = canvas_courses.select{|c| c["sis_course_id"].include?("UA_")}
 
-    group_timetable = timetable["data"]["group"]
+    group_timetable = nil
+    if timetable["data"]
+      group_timetable = timetable["data"]["group"]
+    else
 
     add_timetable_to_canvas(ua, group_timetable, timetable['courseid'])
-
-    plenary_timetable = timetable["data"]["plenary"]
+    
+    plenary_timetable = nil
+    if timetable["data"]
+      plenary_timetable = timetable["data"]["plenary"]
+    end
 
     add_timetable_to_one_canvas_course(ue.first, plenary_timetable, timetable['courseid']) if ue.first
 
