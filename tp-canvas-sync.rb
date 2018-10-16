@@ -407,7 +407,7 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
     group_timetable = nil
     if timetable["data"]
       group_timetable = timetable["data"]["group"]
-    else
+    end
 
     add_timetable_to_canvas(ua, group_timetable, timetable['courseid'])
     
