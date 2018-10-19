@@ -57,7 +57,12 @@ def tp_event_equals_canvas_event?(tp_event, canvas_event, courseid)
   return false if canvas_event["workflow_state"] == "deleted"
 
   #title
-  title = "#{courseid} #{tp_event['summary']}"
+  title = ""
+  if tp_event["title"]
+    title = "#{courseid} (#{tp_event['title']}) #{tp_event['summary']}"
+  else
+    title = "#{courseid} #{tp_event['summary']}"
+  end
   return false if title != canvas_event["title"]
 
   #location
@@ -117,12 +122,19 @@ def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
   end
   @description_meta = {recording: @recording, staff: @staff_arr}
   
+  title = ""
+  if event["title"]
+    title = "#{courseid} (#{event['title']}) #{event['summary']}"
+  else
+    title = "#{courseid} #{event['summary']}"
+  end
+
   options = { headers: Headers,
               query:
               {calendar_event:
                 {
                   context_code: "course_#{canvas_course_id}",
-                  title: "#{courseid} #{event['summary']}",
+                  title: title,
                   description: ERB.new(File.read("event_description.html.erb")).result(binding),
                   start_at: event["dtstart"],
                   end_at: event["dtend"],
@@ -137,7 +149,7 @@ def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
     db_event = CanvasEvent.new
     db_event.canvas_id = res["id"]
     db_event.save
-    AppLog.log.info("Event created in Canvas: #{courseid} #{event['summary']} - canvas id: #{db_event.canvas_id} - internal id: #{db_event.id}")
+    AppLog.log.info("Event created in Canvas: #{title} - canvas id: #{db_event.canvas_id} - internal id: #{db_event.id}")
     db_course.add_canvas_event(db_event)
   end
 end
