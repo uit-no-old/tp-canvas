@@ -269,18 +269,20 @@ def check_canvas_structure_change(semester)
   AppLog.log.info("Starting check for change in Canvas course structure")
   # fetch all active courses from TP
   tp_courses = HTTParty.get(TpBaseUrl + "/course?id=186&sem=#{semester}&times=1")
-  sis_semester = make_sis_semester(semester)
+  
 
   tp_courses["data"].each do |tp_course|
     begin
-      canvas_courses = fetch_and_clean_canvas_courses(tp_course['id'], semester)
+      sis_semester = make_sis_semester(semester, tp_course["terminnr"])
+
+      canvas_courses = fetch_and_clean_canvas_courses(tp_course['id'], semester, tp_course["terminnr"])
 
       canvas_courses_ids = canvas_courses.collect{|c| c["sis_course_id"]}
 
       local_courses = CanvasCourse.where(Sequel.lit("sis_course_id like '%#{tp_course['id']}\\_%\\_#{sis_semester}%'")).collect{|c| c.sis_course_id}
 
       diff =  local_courses - canvas_courses_ids | canvas_courses_ids - local_courses
-
+      
       unless (local_courses - canvas_courses_ids).empty?
         remove_local_courses_missing_from_canvas(local_courses - canvas_courses_ids)
         AppLog.log.error("Local course removed from canvas. courseid:#{tp_course['id']} semester: #{semester}")
@@ -329,7 +331,7 @@ end
 
 def remove_one_tp_course_from_canvas(courseid, semesterid, termnr)
 
-  sis_semester = make_sis_semester(semesterid)
+  sis_semester = make_sis_semester(semesterid, termnr)
 
   CanvasCourse.where(Sequel.lit("sis_course_id like '%#{courseid}\\_%\\_#{sis_semester}%'")).each do |course|
     delete_canvas_events(course)
@@ -348,13 +350,15 @@ def make_sis_course_id(courseid, semesterid, termnr)
   return sis_course_id
 end
 
-
-def make_sis_semester(semesterid)
+# Convert TP semesterid and term number to Canvas sis-format
+# semesterid - String e.g "18h"
+# termnr - String/int eg "3"
+def make_sis_semester(semesterid, termnr)
   sis_semester = ""
   if semesterid[-1].upcase == "H"
-    sis_semester = "20#{semesterid[0..1]}_HØST"
+    sis_semester = "20#{semesterid[0..1]}_HØST_#{termnr}"
   else
-    sis_semester = "20#{semesterid[0..1]}_VÅR"
+    sis_semester = "20#{semesterid[0..1]}_VÅR_#{termnr}"
   end
   return sis_semester
 end
@@ -363,7 +367,8 @@ end
 # remove wrong semester and wrong courseid
 # courseid - String e.g "INF-1100"
 # semesterid - String e.g "18v"
-def fetch_and_clean_canvas_courses(courseid, semesterid)
+# termnr - String/int e.g "3"
+def fetch_and_clean_canvas_courses(courseid, semesterid, termnr)
   # fetch Canvas courses
   canvas_courses_res = HTTParty.get(URI.escape(CanvasBaseUrl + "/accounts/1/courses?search_term=#{courseid}&per_page=100"), headers: Headers)
   next_url = canvas_courses_res.headers["link"].split(",").select{|l| l.include?('rel="next"')}
@@ -376,7 +381,7 @@ def fetch_and_clean_canvas_courses(courseid, semesterid)
   end
 
   # remove all with wrong semester and wrong courseid
-  sis_semester = make_sis_semester(semesterid)
+  sis_semester = make_sis_semester(semesterid, termnr)
   canvas_courses.keep_if{|c| c["sis_course_id"] and c["sis_course_id"].include?("_#{courseid}_") and c["sis_course_id"].upcase.include?(sis_semester.upcase)}
 
   return canvas_courses
@@ -391,11 +396,11 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
 
   # fetch TP timetable
   timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
-  AppLog.log.debug("TP timetable: ")
-  AppLog.log.debug(timetable)
+  #AppLog.log.debug("TP timetable: ")
+  #AppLog.log.debug(timetable)
 
   # fetch Canvas courses
-  canvas_courses = fetch_and_clean_canvas_courses(courseid, semesterid)
+  canvas_courses = fetch_and_clean_canvas_courses(courseid, semesterid, termnr)
   return if canvas_courses.empty?
 
   #only one course in Canvas
@@ -526,5 +531,5 @@ elsif opts[:mq_given]
 elsif opts[:canvas_change_given]
   check_canvas_structure_change(opts[:canvas_change])
 else
-
+  puts "Use --help option for usage"
 end
