@@ -7,6 +7,7 @@ require 'raven'
 require 'pp'
 require 'time'
 require 'nokogiri'
+require 'digest'
 
 database_url_dev = "mysql2://appbase.uit.no/tp_canvas_dev"
 database_url_prod = "mysql2://appbase.uit.no/tp_canvas_prod"
@@ -34,6 +35,7 @@ end
 $threads = []
 
 TpBaseUrl = "https://tp.uio.no/uit/ws"
+#TpBaseUrl = "https://tp-test.uio.no/uit/ws"
 CanvasBaseUrl = "https://uit.instructure.com/api/v1"
 #CanvasBaseUrl = "https://uit.test.instructure.com/api/v1" # Canvas test
 Headers = {"Authorization"  => "Bearer #{ENV['CANVAS_TOKEN']}"}
@@ -63,6 +65,7 @@ def tp_event_equals_canvas_event?(tp_event, canvas_event, courseid)
   else
     title = "#{courseid} #{tp_event['summary']}"
   end
+  title += "\u200B\u200B"
   return false if title != canvas_event["title"]
 
   #location
@@ -76,7 +79,7 @@ def tp_event_equals_canvas_event?(tp_event, canvas_event, courseid)
   return false if Time.parse(tp_event["dtstart"]) != Time.parse(canvas_event["start_at"])
   return false if Time.parse(tp_event["dtend"]) != Time.parse(canvas_event["end_at"])
 
-  # fetch recording and staff from canvas_event
+  # fetch recording, curriculum and staff from canvas_event
   doc = Nokogiri::HTML(canvas_event["description"])
   span = doc.at_css("span#description-meta")
   return false if span.nil?
@@ -87,11 +90,18 @@ def tp_event_equals_canvas_event?(tp_event, canvas_event, courseid)
   if tp_event["staffs"]
     staff_arr = tp_event["staffs"].collect{|staff| "#{staff['firstname']} #{staff['lastname']}"}
   end
+  # external staff
+  if tp_event["xstaff-list"]
+    staff_arr += tp_event["xstaff-list"].collect{|staff| "#{staff['name']} (ekstern) #{staff['url']}"}
+  end
   return false if staff_arr.sort != meta["staff"].sort
   
   #recording tag
   recording = (!tp_event["tags"].nil? and tp_event["tags"].grep(/Mediasite/).any?)
   return false if recording != meta["recording"]
+
+  # curriculum
+  return false if  Digest::MD5.hexdigest(tp_event["curr"].to_s) != meta["curr"]
 
   true
 end
@@ -110,17 +120,26 @@ def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
    end
    @map_url.rstrip!
   end
+  
   @staff = ""
   @staff_arr = []
   if event["staffs"]
     @staff = event["staffs"].collect{|staff| "#{staff['firstname']} #{staff['lastname']}"}.join("<br>")
     @staff_arr = event["staffs"].collect{|staff| "#{staff['firstname']} #{staff['lastname']}"}
   end
+  #external staff
+  if event["xstaff-list"]
+    if @staff != ""
+      @staff += "<br>"
+    end
+    @staff += event["xstaff-list"].collect{|staff| staff["url"] != "" ? "<a href='#{staff['url']}'>#{staff['name']} (ekstern)</a>" : "#{staff['name']} (ekstern)"}.join("<br>")
+    @staff_arr += event["xstaff-list"].collect{|staff| "#{staff['name']} (ekstern) #{staff['url']}"}
+  end
+
   @recording = false
   if event["tags"] and event["tags"].grep(/Mediasite/).any?
     @recording = true
   end
-  @description_meta = {recording: @recording, staff: @staff_arr}
   
   title = ""
   if event["title"]
@@ -128,6 +147,15 @@ def add_event_to_canvas(event, db_course, courseid, canvas_course_id)
   else
     title = "#{courseid} #{event['summary']}"
   end
+  title += "\u200B\u200B"
+
+  @curr = event["curr"]
+
+  @editurl = event["editurl"]
+
+  @description_meta = {recording: @recording, staff: @staff_arr, curr:  Digest::MD5.hexdigest(@curr.to_s)}
+
+  
 
   options = { headers: Headers,
               query:
@@ -396,8 +424,8 @@ def update_one_tp_course_in_canvas(courseid, semesterid, termnr)
 
   # fetch TP timetable
   timetable = HTTParty.get(URI.escape(TpBaseUrl + "/1.4/?id=#{courseid}&sem=#{semesterid}&termnr=#{termnr}"))
-  #AppLog.log.debug("TP timetable: ")
-  #AppLog.log.debug(timetable)
+  AppLog.log.debug("TP timetable: ")
+  AppLog.log.debug(timetable)
 
   # fetch Canvas courses
   canvas_courses = fetch_and_clean_canvas_courses(courseid, semesterid, termnr)
